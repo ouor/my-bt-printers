@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 import uuid
 from dataclasses import dataclass, field
 
@@ -9,6 +10,11 @@ from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 
 from .profiles import BleProfile
+
+
+def _debug(verbose: bool, message: str) -> None:
+    if verbose:
+        print(f"[ble] {message}", file=sys.stderr)
 
 
 @dataclass(frozen=True)
@@ -41,7 +47,8 @@ def _matches_profile(adv_data: AdvertisementData, profile: BleProfile) -> bool:
     return any(uuid.casefold() in advertised for uuid in profile.service_uuids)
 
 
-async def scan_devices(timeout: float = 10.0) -> list[SeenDevice]:
+async def scan_devices(timeout: float = 10.0, *, verbose: bool = False) -> list[SeenDevice]:
+    _debug(verbose, f"scanning timeout={timeout}s")
     found = await BleakScanner.discover(timeout=timeout, return_adv=True)
     devices: list[SeenDevice] = []
     for device, adv_data in found.values():
@@ -54,6 +61,7 @@ async def scan_devices(timeout: float = 10.0) -> list[SeenDevice]:
             )
         )
     devices.sort(key=lambda item: item.rssi if item.rssi is not None else -999, reverse=True)
+    _debug(verbose, f"scan complete found={len(devices)}")
     return devices
 
 
@@ -62,9 +70,14 @@ async def find_printer(
     profile: BleProfile,
     device_id: str | None = None,
     timeout: float = 10.0,
+    verbose: bool = False,
 ) -> BLEDevice | str:
     if device_id and _looks_like_direct_address(device_id):
+        _debug(verbose, f"using direct address {device_id}")
         return device_id
+
+    target = f"name/address {device_id!r}" if device_id else f"profile {profile.name}"
+    _debug(verbose, f"finding printer by {target} timeout={timeout}s")
 
     def predicate(device: BLEDevice, adv_data: AdvertisementData) -> bool:
         if device_id:
@@ -76,6 +89,7 @@ async def find_printer(
         if device_id:
             raise RuntimeError(f"could not find BLE device {device_id!r}")
         raise RuntimeError("could not auto-discover a supported BLE printer")
+    _debug(verbose, f"found {device.name or '(unknown)'} {device.address}")
     return device
 
 
@@ -84,15 +98,23 @@ async def inspect_device(
     profile: BleProfile,
     device_id: str | None,
     timeout: float = 10.0,
+    verbose: bool = False,
 ) -> list[str]:
-    device = await find_printer(profile=profile, device_id=device_id, timeout=timeout)
+    device = await find_printer(
+        profile=profile,
+        device_id=device_id,
+        timeout=timeout,
+        verbose=verbose,
+    )
     if isinstance(device, str):
         lines = [f"device: {device}"]
     else:
         lines = [f"device: {device.name or '(unknown)'} {device.address}"]
+    _debug(verbose, "connecting for GATT inspection")
     async with BleakClient(device) as client:
         lines.append(f"connected: {client.is_connected}")
         lines.append(f"mtu: {client.mtu_size}")
+        _debug(verbose, f"connected={client.is_connected} mtu={client.mtu_size}")
         services = client.services
         if services is None:
             services = await client.get_services()
@@ -118,23 +140,36 @@ async def send_print_job(
     chunk_delay: float = 0.02,
     ready_timeout: float = 30.0,
     ready_notification: bytes | None = None,
+    verbose: bool = False,
 ) -> None:
-    device = await find_printer(profile=profile, device_id=device_id, timeout=scan_timeout)
+    device = await find_printer(
+        profile=profile,
+        device_id=device_id,
+        timeout=scan_timeout,
+        verbose=verbose,
+    )
     ready = asyncio.Event()
 
     def on_notify(_sender, payload: bytearray):
+        _debug(verbose, f"notify {bytes(payload).hex(' ')}")
         if ready_notification is None or bytes(payload) == ready_notification:
             ready.set()
 
+    _debug(verbose, "connecting for print job")
     async with BleakClient(device) as client:
         services = client.services
         if services is None:
             services = await client.get_services()
+        _debug(verbose, f"connected={client.is_connected} mtu={client.mtu_size}")
         if profile.rx_characteristic_uuid and ready_notification is not None:
+            _debug(verbose, f"start notify rx={profile.rx_characteristic_uuid}")
             await client.start_notify(profile.rx_characteristic_uuid, on_notify)
 
         chunk_size = max(20, client.mtu_size - 3)
-        for packet in _chunk(data, chunk_size):
+        chunks = list(_chunk(data, chunk_size))
+        _debug(verbose, f"writing bytes={len(data)} chunks={len(chunks)} chunk_size={chunk_size}")
+        for index, packet in enumerate(chunks, start=1):
+            _debug(verbose, f"write chunk={index}/{len(chunks)} bytes={len(packet)}")
             await client.write_gatt_char(
                 profile.tx_characteristic_uuid,
                 packet,
@@ -144,8 +179,10 @@ async def send_print_job(
 
         if profile.rx_characteristic_uuid and ready_notification is not None:
             try:
+                _debug(verbose, f"waiting for ready notification timeout={ready_timeout}s")
                 await asyncio.wait_for(ready.wait(), timeout=ready_timeout)
             except asyncio.TimeoutError:
+                _debug(verbose, "ready notification timed out")
                 pass
 
 
@@ -157,18 +194,31 @@ async def send_packet_sequence(
     scan_timeout: float = 10.0,
     packet_delay: float = 0.01,
     response: bool = False,
+    verbose: bool = False,
 ) -> None:
-    device = await find_printer(profile=profile, device_id=device_id, timeout=scan_timeout)
+    device = await find_printer(
+        profile=profile,
+        device_id=device_id,
+        timeout=scan_timeout,
+        verbose=verbose,
+    )
+    packet_list = [bytes(packet) for packet in packets]
 
+    _debug(verbose, "connecting for packet sequence")
     async with BleakClient(device) as client:
         services = client.services
         if services is None:
             services = await client.get_services()
+        _debug(verbose, f"connected={client.is_connected} mtu={client.mtu_size}")
 
         chunk_size = max(20, client.mtu_size - 3)
-        for packet in packets:
-            data = bytes(packet)
+        _debug(verbose, f"writing packets={len(packet_list)} chunk_size={chunk_size}")
+        for packet_index, data in enumerate(packet_list, start=1):
             for chunk in _chunk(data, chunk_size):
+                _debug(
+                    verbose,
+                    f"write packet={packet_index}/{len(packet_list)} bytes={len(chunk)}",
+                )
                 await client.write_gatt_char(
                     profile.tx_characteristic_uuid,
                     chunk,

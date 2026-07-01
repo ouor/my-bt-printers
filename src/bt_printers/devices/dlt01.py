@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -64,6 +65,11 @@ _USABLE_FEED_RESERVE_PX = round(
 )
 
 
+def _debug(verbose: bool, message: str) -> None:
+    if verbose:
+        print(f"[dlt01] {message}", file=sys.stderr)
+
+
 def _is_direct_address(value: str) -> bool:
     return value.count(":") == 5 and all(len(part) == 2 for part in value.split(":"))
 
@@ -88,10 +94,13 @@ async def _find_dlt01(
     device_id: str | None,
     *,
     timeout: float,
+    verbose: bool = False,
 ) -> BLEDevice | str:
     if device_id and _is_direct_address(device_id):
+        _debug(verbose, f"using direct address {device_id}")
         return device_id
 
+    _debug(verbose, f"finding DL-T01 target={device_id or 'auto'} timeout={timeout}s")
     device = await BleakScanner.find_device_by_filter(
         lambda device, adv_data: _matches_target(device, adv_data, device_id),
         timeout=timeout,
@@ -99,6 +108,7 @@ async def _find_dlt01(
     if device is None:
         target = device_id or "DL-T01"
         raise RuntimeError(f"could not find BLE device {target!r}")
+    _debug(verbose, f"found {device.name or '(unknown)'} {device.address}")
     return device
 
 
@@ -351,12 +361,14 @@ class DLT01Print(Print):
         *,
         profile: BleProfile,
         timeout: float,
+        verbose: bool = False,
     ) -> asyncio.Queue[bytes]:
         events: asyncio.Queue[bytes] = asyncio.Queue()
         ready: asyncio.Queue[bytes] = asyncio.Queue()
 
         def on_notify(_sender, payload: bytearray) -> None:
             data = bytes(payload)
+            _debug(verbose, f"notify {data.hex(' ')}")
             if data[:2] in (
                 protocol.LOST_PACKET,
                 protocol.PRINTING_PAUSED,
@@ -368,16 +380,20 @@ class DLT01Print(Print):
                 ready.put_nowait(data)
 
         await client.start_notify(profile.rx_characteristic_uuid, on_notify)
+        _debug(verbose, f"start notify rx={profile.rx_characteristic_uuid}")
         # The DOLEWA app opens every print by announcing hardware_info and waiting
         # for the printer's first reply. It performs no 5a0a/5a0b handshake.
+        _debug(verbose, "write hardware_info")
         await client.write_gatt_char(
             profile.tx_characteristic_uuid,
             protocol.hardware_info(),
             response=False,
         )
         try:
+            _debug(verbose, f"waiting for first reply timeout={timeout}s")
             await asyncio.wait_for(ready.get(), timeout=timeout)
         except asyncio.TimeoutError:
+            _debug(verbose, "first reply timed out")
             pass
         return events
 
@@ -390,8 +406,11 @@ class DLT01Print(Print):
         events: asyncio.Queue[bytes],
         chunk_delay: float,
         ready_timeout: float,
+        verbose: bool = False,
     ) -> None:
-        for packet in packets:
+        _debug(verbose, f"writing line packets={len(packets)}")
+        for index, packet in enumerate(packets, start=1):
+            _debug(verbose, f"write line={index}/{len(packets)} bytes={len(packet)}")
             await client.write_gatt_char(
                 profile.tx_characteristic_uuid,
                 packet,
@@ -402,14 +421,17 @@ class DLT01Print(Print):
         # Keep waiting only after all rows are sent for devices that emit a finish
         # notification after the final packet.
         try:
+            _debug(verbose, f"waiting for finish notification timeout={ready_timeout}s")
             while True:
                 event = await asyncio.wait_for(
                     events.get(),
                     timeout=ready_timeout,
                 )
                 if event[:2] == protocol.PRINTING_FINISHED:
+                    _debug(verbose, "finish notification received")
                     return
         except TimeoutError:
+            _debug(verbose, "finish notification timed out")
             return
 
     async def send_rows(
@@ -422,6 +444,7 @@ class DLT01Print(Print):
         scan_timeout: float,
         chunk_delay: float,
         ready_timeout: float,
+        verbose: bool = False,
     ) -> PrintSummary:
         self._validate_rows(rows)
         lines = protocol.label_lines(rows)
@@ -441,13 +464,20 @@ class DLT01Print(Print):
             bytes_sent=bytes_sent,
         )
 
-        device = await _find_dlt01(device_id, timeout=scan_timeout)
+        device = await _find_dlt01(
+            device_id,
+            timeout=scan_timeout,
+            verbose=verbose,
+        )
 
+        _debug(verbose, "connecting for print job")
         async with BleakClient(device, timeout=scan_timeout) as client:
+            _debug(verbose, f"connected={client.is_connected} mtu={client.mtu_size}")
             events = await self._configure(
                 client,
                 profile=profile,
                 timeout=ready_timeout,
+                verbose=verbose,
             )
             # Set burn density explicitly (12-byte 5a0c) instead of relying on the
             # value the app happened to persist on the device.
@@ -456,12 +486,15 @@ class DLT01Print(Print):
                 protocol.density(protocol.energy_to_density(energy)),
                 response=False,
             )
+            _debug(verbose, f"write density={protocol.energy_to_density(energy)}")
             await client.write_gatt_char(
                 profile.tx_characteristic_uuid,
                 protocol.print_prepare(),
                 response=False,
             )
+            _debug(verbose, "write print_prepare")
             for event in start_events:
+                _debug(verbose, f"write start_event bytes={len(event)}")
                 await client.write_gatt_char(
                     profile.tx_characteristic_uuid,
                     event,
@@ -476,7 +509,9 @@ class DLT01Print(Print):
                 events=events,
                 chunk_delay=chunk_delay,
                 ready_timeout=ready_timeout,
+                verbose=verbose,
             )
+            _debug(verbose, "write end_event")
             await client.write_gatt_char(
                 profile.tx_characteristic_uuid,
                 protocol.print_status(len(lines), end=True),

@@ -102,5 +102,6 @@ class Print(ABC):
         scan_timeout: float,
         chunk_delay: float,
         ready_timeout: float,
+        verbose: bool = False,
     ) -> PrintSummary:
         raise NotImplementedError

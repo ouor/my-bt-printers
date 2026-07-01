@@ -55,6 +55,8 @@ Print an image:
 
 Common options: `--font` / `--font-size` / `--align` for text, `--binarization`
 (`floyd-steinberg` or `threshold`) for images, and `--energy` for darkness.
+Add global `--verbose` before the command to print BLE scan/connect/write logs
+to stderr.
 
 ## Notes
 

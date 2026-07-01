@@ -145,6 +145,7 @@ class MX10Print(Print):
         scan_timeout: float,
         chunk_delay: float,
         ready_timeout: float,
+        verbose: bool = False,
     ) -> PrintSummary:
         job, summary = self.build_job(rows, energy=energy)
         await send_print_job(
@@ -155,6 +156,7 @@ class MX10Print(Print):
             chunk_delay=chunk_delay,
             ready_timeout=ready_timeout,
             ready_notification=PRINTER_READY_NOTIFICATION,
+            verbose=verbose,
         )
         return summary
 

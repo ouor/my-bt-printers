@@ -152,6 +152,7 @@ class PeriPagePrint(Print):
         scan_timeout: float,
         chunk_delay: float,
         ready_timeout: float,
+        verbose: bool = False,
     ) -> PrintSummary:
         _job, summary = self.build_job(rows, energy=energy)
         packets = build_image_packets(
@@ -167,6 +168,7 @@ class PeriPagePrint(Print):
             scan_timeout=scan_timeout,
             packet_delay=chunk_delay,
             response=False,
+            verbose=verbose,
         )
         return summary
 

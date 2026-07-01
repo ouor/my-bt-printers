@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import sys
 from pathlib import Path
 
 from .base import RasterOptions, TextPrepareOptions
@@ -33,6 +34,12 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"printer model to use; known: {', '.join(known_devices())}",
     )
     parser.add_argument("--profile", dest="profile", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="print BLE and preparation debug logs to stderr",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     scan = subparsers.add_parser("scan", help="scan nearby BLE devices")
@@ -78,7 +85,7 @@ async def _run(args: argparse.Namespace) -> None:
     profile = device.profile
 
     if args.command == "scan":
-        devices = await scan_devices(timeout=args.timeout)
+        devices = await scan_devices(timeout=args.timeout, verbose=args.verbose)
         for device in devices:
             services = ",".join(device.service_uuids)
             print(
@@ -92,6 +99,7 @@ async def _run(args: argparse.Namespace) -> None:
             profile=profile,
             device_id=args.device,
             timeout=args.timeout,
+            verbose=args.verbose,
         )
         print("\n".join(lines))
         return
@@ -108,6 +116,11 @@ async def _run(args: argparse.Namespace) -> None:
             ),
         )
         image = calibration.apply(image, width_px=profile.width_px)
+        if args.verbose:
+            print(
+                f"[prepare] image={image.width}x{image.height} binarization=threshold",
+                file=sys.stderr,
+            )
         rows = device.prepare.image_to_rows(
             image,
             options=RasterOptions(binarization="threshold"),
@@ -122,6 +135,11 @@ async def _run(args: argparse.Namespace) -> None:
             width_px=image_width_px,
         )
         image = calibration.apply(image, width_px=profile.width_px)
+        if args.verbose:
+            print(
+                f"[prepare] image={image.width}x{image.height} binarization={args.binarization}",
+                file=sys.stderr,
+            )
         rows = device.prepare.image_to_rows(
             image,
             options=RasterOptions(
@@ -139,6 +157,7 @@ async def _run(args: argparse.Namespace) -> None:
         scan_timeout=args.timeout,
         chunk_delay=0.02,
         ready_timeout=8.0,
+        verbose=args.verbose,
     )
     print(f"width={summary.width_px} rows={summary.rows} bytes={summary.bytes_sent}")
     print("done")
