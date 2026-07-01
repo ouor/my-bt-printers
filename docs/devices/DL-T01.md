@@ -292,8 +292,11 @@ Current calibration helper:
 .\.venv\Scripts\python.exe script\dlt01_calibration_pattern.py --print
 ```
 
-The first command is a dry run. The second command sends one asymmetric
-calibration label using the safe one-label protocol shape.
+The first command is a dry run that saves
+`test/dlt01_calibration_pattern.png` and prints the generated packet summary.
+The second command sends the same asymmetric calibration label using the safe
+one-label protocol shape. Use `--output-edge-mm`, `--feed-edge-mm`, and
+`--long-axis-offset-mm` to test measured alignment corrections.
 
 ## Known caveats
 
