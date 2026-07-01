@@ -2,18 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
 
-from PIL import Image
-
-from ..base import (
-    Calibrate,
-    Prepare,
-    Print,
-    PrintSummary,
-    RasterOptions,
-    TextPrepareOptions,
-)
+from ..base import Calibrate, Print, PrintSummary
 from ..ble import send_print_job
 from ..calibration import (
     PrintCalibration,
@@ -21,7 +11,7 @@ from ..calibration import (
     calibrated_image_width_px,
     with_overrides,
 )
-from ..preparation import image_to_rows, rasterize_text, resize_image_to_width
+from ..preparation import DefaultPrepare
 from ..profiles import BleProfile
 from .mx10_protocol import PRINTER_READY_NOTIFICATION, build_image_job
 
@@ -50,39 +40,8 @@ MX10_CALIBRATION = PrintCalibration(
 
 
 @dataclass(frozen=True)
-class MX10Prepare(Prepare):
-    def rasterize_text(
-        self,
-        text: str,
-        *,
-        width_px: int,
-        options: TextPrepareOptions,
-    ) -> Image.Image:
-        return rasterize_text(
-            text,
-            width_px=width_px,
-            font_path=options.font_path,
-            font_size=options.font_size,
-            margin_px=options.margin_px,
-            line_spacing_px=options.line_spacing_px,
-            align=options.align,
-        )
-
-    def resize_image_to_width(self, path: str | Path, *, width_px: int) -> Image.Image:
-        return resize_image_to_width(path, width_px=width_px)
-
-    def image_to_rows(
-        self,
-        image: Image.Image,
-        *,
-        options: RasterOptions,
-    ) -> list[bytes]:
-        return image_to_rows(
-            image,
-            binarization=options.binarization,
-            threshold=options.threshold,
-            max_average_density=options.max_average_density,
-        )
+class MX10Prepare(DefaultPrepare):
+    pass
 
 
 @dataclass(frozen=True)

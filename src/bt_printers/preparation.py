@@ -5,6 +5,8 @@ from typing import Literal
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageStat
 
+from .base import Prepare, RasterOptions, TextPrepareOptions
+
 Binarization = Literal["floyd-steinberg", "threshold"]
 
 
@@ -218,3 +220,38 @@ def image_to_rows(
     for y in range(one_bit.height):
         rows.append(bytes(1 if pixels[x, y] == 0 else 0 for x in range(one_bit.width)))
     return rows
+
+
+class DefaultPrepare(Prepare):
+    def rasterize_text(
+        self,
+        text: str,
+        *,
+        width_px: int,
+        options: TextPrepareOptions,
+    ) -> Image.Image:
+        return rasterize_text(
+            text,
+            width_px=width_px,
+            font_path=options.font_path,
+            font_size=options.font_size,
+            margin_px=options.margin_px,
+            line_spacing_px=options.line_spacing_px,
+            align=options.align,
+        )
+
+    def resize_image_to_width(self, path: str | Path, *, width_px: int) -> Image.Image:
+        return resize_image_to_width(path, width_px=width_px)
+
+    def image_to_rows(
+        self,
+        image: Image.Image,
+        *,
+        options: RasterOptions,
+    ) -> list[bytes]:
+        return image_to_rows(
+            image,
+            binarization=options.binarization,
+            threshold=options.threshold,
+            max_average_density=options.max_average_density,
+        )

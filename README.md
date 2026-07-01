@@ -76,7 +76,7 @@ to stderr.
 - `bt_printers.base` — abstract `Prepare`, `Calibrate`, and `Print` interfaces.
 - `bt_printers.profiles` — `BleProfile` (service/characteristic UUIDs, width).
 - `bt_printers.ble` — BLE scanning, inspection, connection, and packet writing.
-- `bt_printers.preparation` — shared text/image rasterisation and row conversion.
+- `bt_printers.preparation` — shared text/image rasterisation, row conversion, and default `Prepare` implementation.
 - `bt_printers.calibration` — shared calibration helpers and data structures.
 - `bt_printers.cli` — argument parsing and command dispatch.
 - `bt_printers.devices.mx10` / `mx10_protocol` — MX10 profile and command encoder.
