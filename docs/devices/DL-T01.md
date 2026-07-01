@@ -35,8 +35,7 @@ The DL-T01 now prints correctly. Root cause and final settings:
 - Protocol module: `src/bt_printers/devices/dlt01_protocol.py`
 - Registry aliases: `dlt01`, `dl-t01`, `dolewa-t01`, `label`
 - Transport: Bluetooth LE through `bleak`
-- Send path: DL-T01-specific handshake, density command, print event, and line
-  packets
+- Send path: hardware-info probe, density command, print event, and line packets
 - Calibration script: `script/dlt01_calibration_pattern.py`
 
 ## Device class
@@ -125,18 +124,19 @@ The command family is the Xiqi/DOLEWA `5a` protocol:
 
 - Hardware info:
   - `5a 01 00 00 00 00 00 00 00 00 00 00`
-- Handshake challenge:
+- Legacy handshake helpers:
   - `5a 0a` + 10 static zero bytes
-- Handshake response:
   - `5a 0b` + 10 bytes derived from CRC16-XMODEM over the static challenge
     prefix and printer BLE address
+  - These helpers remain in `dlt01_protocol.py` for reference, but the current
+    print path does not send them.
 - Density:
   - `5a 0c {level}`
 - Print start/end event:
   - Start: `5a 04 {line_count_hi} {line_count_lo} 00 00 00 00`
   - End: `5a 04 {line_count_hi} {line_count_lo} 01 00 00 00`
 - Raster line:
-  - `56 {line_no_hi} {line_no_lo} {96 bytes} 00`
+  - `55 {line_no_hi} {line_no_lo} {96 bytes} 00`
 
 The reference roll-printer protocol packs two 384-dot rows into each 96-byte
 line packet. DL-T01 uses a 12mm / 96-dot physical label width in this project,
@@ -148,13 +148,14 @@ This distinction matters. An earlier implementation incorrectly packed only two
 stretched the label in the feed direction and consumed multiple labels.
 
 The DOLEWA app's DL-T01 path was later inspected from its Hermes bytecode. That
-path differs from the generic FunnyPrint roll-printer path in two important
-ways:
+path may differ from the generic FunnyPrint roll-printer path in two important
+ways, but the current project keeps the packet shape that printed successfully
+on the tested device:
 
 - `5a 04` print status packets are allocated as `8` bytes, leaving two trailing
   zero bytes after the start/end flag.
-- Raster line packets use command byte `0x56` for device names starting with
-  `DL-T01`; the generic roll-printer path uses `0x55`.
+- Some app paths appear to use command byte `0x56` for device names starting
+  with `DL-T01`; this project currently uses `0x55`.
 
 The app also converts rows from a 384-dot intermediate image by taking the last
 `12` bytes of each 48-byte row, then groups those 12-byte rows into 96-byte
@@ -169,13 +170,14 @@ and `01 00` to finish.
 
 The current send order is:
 
-1. Handshake.
+1. Hardware-info probe, then wait briefly for the first reply.
 2. Density command.
-3. Start event.
-4. Exactly 40 raster line packets.
-5. Wait for the printer's finish notification, or for `ready_timeout` if no
+3. Print-prepare command.
+4. Start event.
+5. Exactly 40 raster line packets.
+6. Wait for the printer's finish notification, or for `ready_timeout` if no
    event arrives after the final raster packet.
-6. End event.
+7. End event.
 
 Any `5a 06` notification received before all 40 raster line packets have been
 sent is ignored. Treating an early `5a 06` as completion can truncate the job
@@ -186,17 +188,19 @@ The DOLEWA app path is still ambiguous at the decompiled call-site level. On
 the tested printer, omitting the end event made the job transfer complete
 without any visible print, so the implementation keeps the explicit end event.
 
-## Handshake note
+## Legacy handshake note
 
 The reference driver treats a second `5a 0b` notification with payload byte
-`0x01` as handshake success.
+`0x01` as handshake success. The current implementation does not perform this
+handshake, but the helper functions are kept for reference while the protocol
+notes remain in flux.
 
 The tested DL-T01 firmware returned the exact `5a 0b` response payload sent by
 the host, for example:
 
 - `5a 0b dd dd dd dd dd dd dd dd dd dd`
 
-The implementation accepts either form:
+The old handshake experiment accepted either form:
 
 - `result[2] == 0x01`
 - response payload echoed back exactly
@@ -227,7 +231,7 @@ Prepared data:
 - Max packet size: `100 bytes`
 - Print summary: `width=96 rows=320 bytes=4019`
 
-The host completed the first full handshake and data transfer successfully, but
+The host completed the first hardware-info probe and data transfer successfully, but
 the first printed label showed the row-packing issue described above and text
 density was too light. The fixed row packing and density `5` default should be
 verified with the smallest possible next print.

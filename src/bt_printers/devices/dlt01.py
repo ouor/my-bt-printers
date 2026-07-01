@@ -467,8 +467,8 @@ class DLT01Print(Print):
                     event,
                     response=False,
                 )
-            # The first start packet can be a geometry/length preset, followed by
-            # the actual data-line count packet for this job.
+            # All raster packets are sent before waiting for the finish event so
+            # an early notification cannot truncate the label.
             await self._send_line_packets(
                 client,
                 profile=profile,
